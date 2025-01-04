@@ -20,6 +20,8 @@ $plugins->add_hook('member_profile_end', 'application_member_profile');
 $plugins->add_hook('fetch_wol_activity_end', 'application_user_activity');
 $plugins->add_hook('build_friendly_wol_location_end', 'application_location_activity');
 
+// forumdisplay
+$plugins->add_hook('forumdisplay_thread_end', 'application_forumdisplay');
 function application_info()
 {
     return array(
@@ -426,14 +428,6 @@ function application_activate()
     }
 
     require MYBB_ROOT . "/inc/adminfunctions_templates.php";
-    find_replace_templatesets("header", "#" . preg_quote('{$pm_notice}') . "#i", '{$application_alert} {$pm_notice}');
-    find_replace_templatesets("header", "#" . preg_quote('	<navigation>
-				<br />	') . "#i", '	<navigation>
-				<br />	{$checklist}');
-    find_replace_templatesets("member_profile", "#" . preg_quote('{$userstars}<br />') . "#i", '{$userstars}<br /> {$wob}<br />');
-    find_replace_templatesets("showthread", "#" . preg_quote('<strong>{$thread[\'displayprefix\']}{$thread[\'subject\']}</strong>') . "#i", '<strong>{$thread[\'displayprefix\']}{$thread[\'subject\']}</strong>
-    {$application_correct}');
-    find_replace_templatesets("showthread", "#" . preg_quote('<tr><td id="posts_container">') . "#i", '{$application_wob}<tr><td id="posts_container">');
 
 }
 
@@ -452,19 +446,61 @@ function application_deactivate()
         $alertTypeManager->deleteByCode('alert_wob');
     }
     require MYBB_ROOT . "/inc/adminfunctions_templates.php";
-    find_replace_templatesets("header", "#" . preg_quote('{$application_alert}') . "#i", '', 0);
-    find_replace_templatesets("header", "#" . preg_quote('{$checklist}') . "#i", '', 0);
-    find_replace_templatesets("member_profile", "#" . preg_quote('{$wob}<br />') . "#i", '', 0);
-    find_replace_templatesets("showthread", "#" . preg_quote('{$application_correct}') . "#i", '', 0);
-    find_replace_templatesets("showthread", "#" . preg_quote('{$application_wob}') . "#i", '', 0);
 
 
 }
 
+//
+// admin cp options
+//
+$plugins->add_hook('admin_formcontainer_output_row', 'application_admin_formcontainer_output_row');
+function application_admin_formcontainer_output_row($args)
+{
+    global $lang, $mybb, $form_container, $form, $db;
+    $lang->load('user_users');
+
+    if ($mybb->get_input('module') == 'user-users' && $lang->user_notes == $args['title']) {
+
+        $wob = $db->fetch_field($db->simple_select('users', 'wobdate', 'uid = ' . $mybb->get_input('uid', MyBB::INPUT_INT)), 'wobdate');
+        if (!empty($wob)) {
+            $wob = date("Y-m-d", $wob);
+            if ($wob != '0000-00-00') {
+                $pieces = explode('-', $wob);
+                $wobDate_day = $pieces[2];
+                $wobDate_month = $pieces[1];
+                $wobDate_year = $pieces[0];
+            }
+        }
+        $built = $form->generate_numeric_field('wobDate_day', $wobDate_day, array('id' => 'wobDate_day', 'style' => 'width: 100px;', 'min' => 1, 'max' => 31));
+        $built .= $form->generate_numeric_field('wobDate_month', $wobDate_month, array('id' => 'wobDate_month', 'style' => 'width: 100px;', 'min' => 1, 'max' => 12));
+        $built .= $form->generate_numeric_field('wobDate_year', $wobDate_year, array('id' => 'wobDate_year', 'style' => 'width: 100px;', 'min' => 1));
+        $args['content'] .= $form_container->output_row('neues WoB-Datum', '', $built);
+        return $args;
+    }
+}
+
+$plugins->add_hook('admin_user_users_edit_commit_start', 'application_admin_user_users_edit_commit_start');
+function application_admin_user_users_edit_commit_start()
+{
+    global $mybb, $db;
+
+    $profileUid = $mybb->get_input('uid', MyBB::INPUT_INT);
+    $wobday = $mybb->get_input('wobDate_day', MyBB::INPUT_INT);
+    $wobmonth = $mybb->get_input('wobDate_month', MyBB::INPUT_INT);
+    $wobyear = $mybb->get_input('wobDate_year', MyBB::INPUT_INT);
+    $wob = $wobyear . "-" . $wobmonth . "-" . $wobday;
+    $wob = strtotime($wob);
+
+    $newwob = array(
+        'wobdate' => $wob
+    );
+
+    $db->update_query('users', $newwob, 'uid = ' . $profileUid);
+}
 
 function application_showthread()
 {
-    global $thread, $db, $mybb, $forum, $templates, $lang, $select_group, $tid, $application_wob, $correcteur, $application_correct;
+    global $thread, $db, $mybb, $forum, $templates, $lang, $select_group, $tid, $application_wob, $correcteur, $application_correct, $application_add_correct;
     $lang->load("application");
 
     // settings
@@ -479,17 +515,18 @@ function application_showthread()
         // korrigiert von
         $tuid = $thread['uid'];
         $correct = $db->fetch_field($db->simple_select("applications", "corrector", "uid = {$tuid}"), "corrector");
-	if($mybb->user['canmodcp'] == 1){
+
         if (!empty($correct)) {
             $c_user = $db->fetch_array($db->query("SELECT * FROM " . TABLE_PREFIX . "users WHERE uid = {$correct}"));
             $c_name = format_name($c_user['username'], $c_user['usergroup'], $c_user['displaygroup']);
             $charalink = build_profile_link($c_name, $c_user['uid']);
             $correcteur = $lang->sprintf($lang->app_showthread_correct, $charalink);
         } else {
-            $add_correct = "<a href='misc.php?action=application_overview&correct={$tuid}' title='{$lang->app_correct_text}'>{$lang->app_correct_text}</a>";
+            if ($mybb->usergroup['canmodcp'] == 1) {
+                eval ("\$application_add_correct .= \"" . $templates->get("application_add_correct") . "\";");
+            }
             $correcteur = $lang->sprintf($lang->app_showthread_correct, $lang->app_showthread_correct_no) . " " . $add_correct;
         }
-	}
         eval ("\$application_correct = \"" . $templates->get("application_correct") . "\";");
         if ($app_groups == -1) {
             $get_groups = $db->query("SELECT *
@@ -608,13 +645,12 @@ function application_misc()
             }
 
             $deadline = date("d.m.y", $deadline);
-
-            $get_thread = $db->fetch_array($db->simple_select("threads", "*", "uid = {$uid} and fid = {$appforum}"));
+            $get_thread = $db->fetch_array($db->simple_select("threads", "*", "uid = {$row['uid']} and fid = {$appforum}"));
 
             if (!empty($get_thread)) {
-                $app_thread = "<a href='showthread.php?tid={$get_thread['tid']}'>{$lang->app_thread}</a>";
+
                 if (empty($row['corrector']) && $mybb->usergroup['canmodcp'] == 1) {
-                    $add_correct = "<a href='misc.php?action=application_overview&correct={$uid}' title='{$lang->app_correct_text}'>{$lang->app_addcorrecteur}</a>";
+                    $add_correct = "<a href='misc.php?action=application_overview&correct={$row['uid']}' title='{$lang->app_correct_text}'>{$lang->app_addcorrecteur}</a> <div class='smalltext'>{$lang->app_correcteur_empty}</div>";
                 } else {
                     $corr_name = $db->fetch_field($db->simple_select("userfields", $playername, "ufid = {$row['corrector']}"), $playername);
                     if (!empty($corr_name)) {
@@ -624,6 +660,7 @@ function application_misc()
                     }
 
                 }
+                $app_thread = "<a href='showthread.php?tid={$get_thread['tid']}'>{$lang->app_thread}</a>";
             } else {
                 $app_thread = $lang->app_nothread;
 
@@ -652,10 +689,10 @@ function application_misc()
         }
 
         // Bewerbung übernehmen
-        $correct = $mybb->input['correct'];
 
-        if ($correct) {
 
+        if (isset($mybb->input['correct'])) {
+            $correct = $mybb->input['correct'];
             $corretor = $mybb->user['uid'];
 
             $get_correct = array(
@@ -687,7 +724,7 @@ function application_misc()
         $wobtext = $mybb->settings['app_wobtext'];
         $author = $mybb->input['uid'];
         $usergroup = $mybb->input['usergroup'];
-        $subject = "{$mybb->input['subject']}";
+        $subject = $mybb->input['subject'];
         $username = $db->escape_string($mybb->user['username']);
         $posttid = $mybb->input['tid'];
         $fid = $mybb->input['fid'];
@@ -748,6 +785,16 @@ function application_misc()
         );
         $db->update_query("threads", $new_record, "tid = '$posttid'");
 
+        
+            // Alert auslösen, weil wir wollen ja bescheid wissen, ne?!
+            if (class_exists('MybbStuff_MyAlerts_AlertTypeManager')) {
+                $alertType = MybbStuff_MyAlerts_AlertTypeManager::getInstance()->getByCode('alert_wob');
+                if ($alertType != NULL && $alertType->getEnabled()) {
+                    $alert = new MybbStuff_MyAlerts_Entity_Alert((int) $author, $alertType);
+                    MybbStuff_MyAlerts_AlertManager::getInstance()->addAlert($alert);
+                }
+            }
+
         $db->delete_query("applications", "uid = {$author}");
         redirect("showthread.php?tid={$posttid}");
     }
@@ -803,7 +850,7 @@ function application_global()
                 }
             }
 
-            
+
         }
     }
 
@@ -846,6 +893,33 @@ function application_global()
         }
 
 
+        $checklist_point = $lang->checklist_job . "1";
+        if (!empty($mybb->user['jid'])) {
+
+            eval ("\$fidstatus = \"" . $templates->get("application_checklist_check") . "\";");
+        } else {
+            eval ("\$fidstatus = \"" . $templates->get("application_checklist_nocheck") . "\";");
+        }
+        eval ("\$checklist_job = \"" . $templates->get("application_checklist_fid") . "\";");
+
+        $checklist_point = $lang->checklist_resi;
+        if (!empty($mybb->user['rid'])) {
+
+            eval ("\$fidstatus = \"" . $templates->get("application_checklist_check") . "\";");
+        } else {
+            eval ("\$fidstatus = \"" . $templates->get("application_checklist_nocheck") . "\";");
+        }
+        eval ("\$checklist_resi = \"" . $templates->get("application_checklist_fid") . "\";");
+
+        $checklist_point = "Wurde ein <b>Geburtstag</b> eingefügt?";
+        if (!empty($mybb->user['birthday'])) {
+
+            eval ("\$fidstatus = \"" . $templates->get("application_checklist_check") . "\";");
+        } else {
+            eval ("\$fidstatus = \"" . $templates->get("application_checklist_nocheck") . "\";");
+        }
+        eval ("\$checklist_birthday = \"" . $templates->get("application_checklist_fid") . "\";");
+
         // Bewerbung vorhanden
         $get_thread = $db->fetch_array($db->simple_select("threads", "*", "uid = {$mybb->user['uid']} and fid = {$appforum}"));
         if (!empty($get_thread)) {
@@ -885,9 +959,9 @@ function getApplication()
     where usergroup = 2)
     ");
 
-  while ($deletecharas = $db->fetch_array($get_deleteuser_wobuser)) {
-      $db->delete_query("applications", "uid = {$deletecharas['uid']}");
-  }
+    while ($deletecharas = $db->fetch_array($get_deleteuser_wobuser)) {
+        $db->delete_query("applications", "uid = {$deletecharas['uid']}");
+    }
 
     /*
      * Bewerber in die Datenbank laden. 
@@ -1084,4 +1158,34 @@ function application_location_activity($plugin_array)
         $plugin_array['location_name'] = $lang->app_wiw;
     }
     return $plugin_array;
+}
+
+// bei den Threads wird es auch noch angezeigt
+function application_forumdisplay(&$thread)
+{
+    global $db, $mybb, $templates, $thread, $foruminfo, $lang, $correcteur;
+    $lang->load("application");
+    $app_forum = $mybb->settings['app_appforum'];
+    $foruminfo['parentlist'] = "," . $foruminfo['parentlist'] . ",";
+    if (preg_match("/,$app_forum,/i", $foruminfo['parentlist'])) {
+        // korrigiert von
+        $tuid = $thread['uid'];
+        $correct = $db->fetch_field($db->simple_select("applications", "corrector", "uid = {$tuid}"), "corrector");
+
+        if (!empty($correct)) {
+            $c_user = $db->fetch_array($db->query("SELECT * FROM " . TABLE_PREFIX . "users WHERE uid = {$correct}"));
+            $c_name = format_name($c_user['username'], $c_user['usergroup'], $c_user['displaygroup']);
+            $charalink = build_profile_link($c_name, $c_user['uid']);
+            $correcteur = "<div class='smalltext'>" . $lang->sprintf($lang->app_fd_correcteur, $charalink) . "</div>";
+        } else {
+            if ($mybb->usergroup['canmodcp'] == 1) {
+                $add_correct = "<a href='misc.php?action=application_overview&correct={$tuid}' title='{$lang->app_correct_text}'>{$lang->app_correct_text}</a>";
+            }
+            $correcteur = "<div class='smalltext'>" . $lang->sprintf($lang->app_fd_no_correcteur) . " " . $add_correct . "</div>";
+        }
+
+
+
+    }
+
 }
