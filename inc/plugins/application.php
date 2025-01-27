@@ -619,15 +619,7 @@ function application_misc()
             $extendcount = $row['appcount'];
             $as_uid = $row['as_uid'];
 
-            if ($as_uid == $mybb->user['uid'] or $uid = $mybb->user['uid'] or $as_uid == $mybb->user['as_uid']) {
-                if ($row['appcount'] < $app_renewcount && empty($row['corrector'])) {
-                    $extend = "<a href='misc.php?action=application_overview&extend={$uid}'>{$lang->app_extend}</a>";
-                }
-            }
 
-            $charaname = $chara = build_profile_link($row['username'], $row['uid']);
-
-            $charaname = $charaname . $extend;
             $regdate = $row['regdate'];
             $deadline = $row['appdeadline'];
             $faktor = 86400;
@@ -647,8 +639,9 @@ function application_misc()
             $deadline = date("d.m.y", $deadline);
             $get_thread = $db->fetch_array($db->simple_select("threads", "*", "uid = {$row['uid']} and fid = {$appforum}"));
 
+            $count_thread = 0;
             if (!empty($get_thread)) {
-
+                $count_thread++;
                 if (empty($row['corrector']) && $mybb->usergroup['canmodcp'] == 1) {
                     $add_correct = "<a href='misc.php?action=application_overview&correct={$row['uid']}' title='{$lang->app_correct_text}'>{$lang->app_addcorrecteur}</a> <div class='smalltext'>{$lang->app_correcteur_empty}</div>";
                 } else {
@@ -665,7 +658,21 @@ function application_misc()
                 $app_thread = $lang->app_nothread;
 
             }
+            if ($as_uid == $mybb->user['uid'] or $uid == $mybb->user['uid'] or $as_uid == $mybb->user['as_uid']) {
+                if ($row['appcount'] < $app_renewcount && $count_thread == 0) {
+                    $extend = "<a href='misc.php?action=application_overview&extend={$uid}'>{$lang->app_extend}</a>";
+                }
+            }
 
+            if($mybb->usergroup['canmodcp'] == 1){
+                if ($count_thread == 0) {
+                $extend = "<a href='misc.php?action=application_overview&extend={$uid}'>{$lang->app_extend}</a>";
+                }
+            }
+
+            $charaname = $chara = build_profile_link($row['username'], $row['uid']);
+
+            $charaname = $charaname . $extend;
             eval ("\$application_bit .= \"" . $templates->get("application_misc_bit") . "\";");
         }
 
@@ -893,7 +900,7 @@ function application_global()
         }
 
 
-        $checklist_point = $lang->checklist_job . "1";
+        $checklist_point = $lang->checklist_job;
         if (!empty($mybb->user['jid'])) {
 
             eval ("\$fidstatus = \"" . $templates->get("application_checklist_check") . "\";");
